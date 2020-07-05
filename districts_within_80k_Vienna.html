@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.0.3/dist/leaflet.css"/>
+
+<meta charset="utf-8">
+<title>Austrian Districts</title>
+
+<style type="text/css">
+body {
+    font-size: 11px;
+    font-family: sans-serif;
+}
+h1 {
+    font-size: 1.5em;
+}
+#map {
+    position: relative;
+    width: 100%;
+    height: 500px;
+}
+#loading {
+    position: absolute;
+    z-index: 500;
+    top: 50%;
+    left: 50%;
+    width: 350px;
+    padding: 20px;
+    margin: -55px 0 0 -170px;
+    font-size: 30px;
+    font-weight: bold;
+    text-align: center;
+    background-color: rgba(0,0,0,0.1);
+
+}
+</style>
+
+</head>
+
+
+<body>
+
+<h1>Austrian Districts Within 80km of Vienna</h1>
+<a id="downloadAnchorElem" style="display:none"></a>
+<div id="map">
+<div id="loading">Drag and drop file here...</div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.0.3/dist/leaflet.js"></script>
+<script src="https://npmcdn.com/@turf/turf@5.1.6/turf.js"></script>
+
+<script>
+// create a Leaflet map with OpenStreetMap tile layer
+var map = L.map("map").setView([48, 13], 7);
+L.tileLayer("http://{s}.tile.osm.org/{z}/{x}/{y}.png", {
+    attribution: '&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
+}).addTo(map);
+
+var mapEl = document.getElementById("map");
+
+// disable default drag & drop functionality
+mapEl.addEventListener("dragenter", function(event) {
+    event.preventDefault();
+});
+mapEl.addEventListener("dragover", function(event) {
+    event.preventDefault();
+});
+
+// add drop listener to handle our file
+mapEl.addEventListener("drop", function(event) {
+
+    event.preventDefault();
+
+    var file = event.dataTransfer.files[0];
+
+    var reader = new FileReader();
+    reader.addEventListener("loadend", function() {
+        //create a referene point for Vienna to be used to create 80km radius later on
+        var viennaCenter = {
+            'type': 'Feature',
+            'geometry': {
+                'type': 'Point',
+                'coordinates': [16.3566819, 48.2003630]
+            },
+            'properties': {
+                'name': 'Vienna'
+            }
+        };
+        var DISTRICT_DISTANCE = 80;
+
+        //adding circle to map using Turf.JS with point, and radius
+        var eightyK = turf.circle(viennaCenter, DISTRICT_DISTANCE);
+        L.geoJson(eightyK).addTo(map);
+
+        //read data file and split first on each line, and then splitting each line on '#' to parse data
+        var lines = reader.result.split("\n").map(function(item){
+          return item.split("#");
+        });
+
+        //props is creating an array of the properties to be used in writing the geoJSON outfile later on
+        var props = lines[0];
+
+        //stringify the properties then shift the property line off of the data file so parsing later can only deal
+        //with the true data of the file
+        props.map(function(property){
+          property = "'" + property + "'";
+        });
+        lines.shift();
+
+        //geoFeatures is an array which will store all of the parsed out data points once the are re-written in
+        //geoJSON format
+        var geoFeatures =[];
+
+        //map out each property and store them in the newly created feature, store the feature in geoFeatures
+        var features = lines.map(function(line){
+          //regex to extract lat/lat, both stored in object 2 within line array
+          var long = +line[2].replace(/,/g, '.').match(/lon:(\d*(\.\d*))/)[1];
+          var lat = +line[2].replace(/,/g, '.').match(/lat:(\d*(\.\d*))/)[1] ;
+
+          var feature = {
+              'type': 'Feature',
+              'geometry': {
+                  'type': 'Point',
+                  'coordinates': [long, lat]
+              },
+              'properties': {
+                  [props[1]] : line[1],
+                  'Latitude': lat,
+                  'Longitude': long,
+                  [props[3]]: line[3],
+                  [props[4]]: line[4],
+                  [props[5]]: line[5],
+                  [props[6]]: line[6],
+                  [props[7]]: line[7].trimRight("\r"),
+                  [props[0]]: line[0]
+                }
+            };
+
+          geoFeatures.push(feature);
+          });
+
+        //map all of the features to see if they are within the 80km radius, if true add feature value to inFeatures
+        //pointsWithinPolygon stores all features in ptsWithin, but only adds feature values if iteration returns true
+        //this issue is treated in downloadFeatures below
+        var inFeatures = [];
+        geoFeatures.map(function(feature){
+          var ptsWithin = turf.pointsWithinPolygon(feature, eightyK);
+          L.geoJson(ptsWithin).addTo(map);
+          inFeatures.push(ptsWithin[Object.keys(ptsWithin)[1]]);
+        });
+
+        //flattening array of feature arrays, and filtering out empty features that ptsWithin stored
+        var downloadFeatures = [].concat.apply([], inFeatures.filter(value => Object.keys(value).length !== 0));
+
+        //create geoJSON feature collection file, and prompt user to download file post drag and drop
+        var geoJSON = {type: "FeatureCollection", features: downloadFeatures};
+        var dataDownload = "data:text/geojson;charset=utf-8," + encodeURIComponent(JSON.stringify(geoJSON));
+        var downloadElem = document.getElementById('downloadAnchorElem');
+
+        downloadElem.setAttribute("href", dataDownload);
+        downloadElem.setAttribute("download", "districts80kofVienna.geojson");
+        downloadElem.click();
+        
+        // hide loading element
+        document.getElementById("loading").style.display = "none";
+    });
+
+    reader.readAsText(file);
+});
+
+
+
+</script>
+
+</body>
+
+</html>
